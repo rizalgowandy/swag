@@ -24,6 +24,17 @@ func TestDefaultFieldParser(t *testing.T) {
 		assert.Equal(t, "one", schema.Example)
 
 		schema = spec.Schema{}
+		schema.Type = []string{"string"}
+		err = newTagBaseFieldParser(
+			&Parser{},
+			&ast.Field{Tag: &ast.BasicLit{
+				Value: `json:"test" example:""`,
+			}},
+		).ComplementSchema(&schema)
+		assert.NoError(t, err)
+		assert.Equal(t, "", schema.Example)
+
+		schema = spec.Schema{}
 		schema.Type = []string{"float"}
 		err = newTagBaseFieldParser(
 			&Parser{},
@@ -49,6 +60,21 @@ func TestDefaultFieldParser(t *testing.T) {
 		assert.Equal(t, "csv", schema.Format)
 	})
 
+	t.Run("Title tag", func(t *testing.T) {
+		t.Parallel()
+
+		schema := spec.Schema{}
+		schema.Type = []string{"string"}
+		err := newTagBaseFieldParser(
+			&Parser{},
+			&ast.Field{Tag: &ast.BasicLit{
+				Value: `json:"test" title:"myfield"`,
+			}},
+		).ComplementSchema(&schema)
+		assert.NoError(t, err)
+		assert.Equal(t, "myfield", schema.Title)
+	})
+
 	t.Run("Required tag", func(t *testing.T) {
 		t.Parallel()
 
@@ -71,8 +97,76 @@ func TestDefaultFieldParser(t *testing.T) {
 		assert.Equal(t, true, got)
 	})
 
-	t.Run("Extensions tag", func(t *testing.T) {
+	t.Run("Default required tag", func(t *testing.T) {
+		t.Parallel()
 
+		got, err := newTagBaseFieldParser(
+			&Parser{
+				RequiredByDefault: true,
+			},
+			&ast.Field{Tag: &ast.BasicLit{
+				Value: `json:"test"`,
+			}},
+		).IsRequired()
+		assert.NoError(t, err)
+		assert.True(t, got)
+	})
+
+	t.Run("Optional tag", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := newTagBaseFieldParser(
+			&Parser{
+				RequiredByDefault: true,
+			},
+			&ast.Field{Tag: &ast.BasicLit{
+				Value: `json:"test" binding:"optional"`,
+			}},
+		).IsRequired()
+		assert.NoError(t, err)
+		assert.False(t, got)
+
+		got, err = newTagBaseFieldParser(
+			&Parser{
+				RequiredByDefault: true,
+			},
+			&ast.Field{Tag: &ast.BasicLit{
+				Value: `json:"test" validate:"optional"`,
+			}},
+		).IsRequired()
+		assert.NoError(t, err)
+		assert.False(t, got)
+
+		got, err = newTagBaseFieldParser(
+			&Parser{
+				RequiredByDefault: true,
+			},
+			&ast.Field{Tag: &ast.BasicLit{
+				Value: `json:"test,omitempty"`,
+			}},
+		).IsRequired()
+		assert.NoError(t, err)
+		assert.False(t, got)
+	})
+
+	t.Run("Extensions tag", func(t *testing.T) {
+		t.Parallel()
+
+		schema := spec.Schema{}
+		schema.Type = []string{"int"}
+		schema.Extensions = map[string]interface{}{}
+		err := newTagBaseFieldParser(
+			&Parser{},
+			&ast.Field{Tag: &ast.BasicLit{
+				Value: `json:"test" extensions:"x-nullable,x-abc=def,!x-omitempty,x-example=[0, 9],x-example2={çãíœ, (bar=(abc, def)), [0,9]}"`,
+			}},
+		).ComplementSchema(&schema)
+		assert.NoError(t, err)
+		assert.Equal(t, true, schema.Extensions["x-nullable"])
+		assert.Equal(t, "def", schema.Extensions["x-abc"])
+		assert.Equal(t, false, schema.Extensions["x-omitempty"])
+		assert.Equal(t, "[0, 9]", schema.Extensions["x-example"])
+		assert.Equal(t, "{çãíœ, (bar=(abc, def)), [0,9]}", schema.Extensions["x-example2"])
 	})
 
 	t.Run("Enums tag", func(t *testing.T) {
@@ -98,6 +192,55 @@ func TestDefaultFieldParser(t *testing.T) {
 			}},
 		).ComplementSchema(&schema)
 		assert.Error(t, err)
+	})
+
+	t.Run("EnumVarNames tag", func(t *testing.T) {
+		t.Parallel()
+
+		schema := spec.Schema{}
+		schema.Type = []string{"int"}
+		schema.Extensions = map[string]interface{}{}
+		schema.Enum = []interface{}{}
+		err := newTagBaseFieldParser(
+			&Parser{},
+			&ast.Field{Tag: &ast.BasicLit{
+				Value: `json:"test" enums:"0,1,2" x-enum-varnames:"Daily,Weekly,Monthly"`,
+			}},
+		).ComplementSchema(&schema)
+		assert.NoError(t, err)
+		assert.Equal(t, []interface{}{"Daily", "Weekly", "Monthly"}, schema.Extensions["x-enum-varnames"])
+
+		schema = spec.Schema{}
+		schema.Type = []string{"int"}
+		err = newTagBaseFieldParser(
+			&Parser{},
+			&ast.Field{Tag: &ast.BasicLit{
+				Value: `json:"test" enums:"0,1,2,3" x-enum-varnames:"Daily,Weekly,Monthly"`,
+			}},
+		).ComplementSchema(&schema)
+		assert.Error(t, err)
+
+		// Test for an array of enums
+		schema = spec.Schema{}
+		schema.Type = []string{"array"}
+		schema.Items = &spec.SchemaOrArray{
+			Schema: &spec.Schema{
+				SchemaProps: spec.SchemaProps{
+					Type: []string{"int"},
+				},
+			},
+		}
+		schema.Extensions = map[string]interface{}{}
+		schema.Enum = []interface{}{}
+		err = newTagBaseFieldParser(
+			&Parser{},
+			&ast.Field{Tag: &ast.BasicLit{
+				Value: `json:"test" enums:"0,1,2" x-enum-varnames:"Daily,Weekly,Monthly"`,
+			}},
+		).ComplementSchema(&schema)
+		assert.NoError(t, err)
+		assert.Equal(t, []interface{}{"Daily", "Weekly", "Monthly"}, schema.Items.Schema.Extensions["x-enum-varnames"])
+		assert.Equal(t, spec.Extensions{}, schema.Extensions)
 	})
 
 	t.Run("Default tag", func(t *testing.T) {
@@ -544,11 +687,54 @@ func TestValidTags(t *testing.T) {
 		schema.Type = []string{"integer"}
 		err = newTagBaseFieldParser(
 			&Parser{},
-			&ast.Field{Tag: &ast.BasicLit{
-				Value: `json:"test" validate:"required,oneof=one two"`,
-			}},
+			&ast.Field{
+				Names: []*ast.Ident{{Name: "Test"}},
+				Tag: &ast.BasicLit{
+					Value: `json:"test" validate:"required,oneof=one two"`,
+				}},
 		).ComplementSchema(&schema)
 		assert.NoError(t, err)
 		assert.Empty(t, schema.Enum)
+	})
+
+	t.Run("Form Filed Name", func(t *testing.T) {
+		t.Parallel()
+
+		filednames, err := newTagBaseFieldParser(
+			&Parser{},
+			&ast.Field{
+				Names: []*ast.Ident{{Name: "Test"}},
+				Tag: &ast.BasicLit{
+					Value: `form:"test[]"`,
+				}},
+		).FieldNames()
+		assert.NoError(t, err)
+		assert.Equal(t, "test", filednames[0])
+
+		filednames, err = newTagBaseFieldParser(
+			&Parser{},
+			&ast.Field{
+				Names: []*ast.Ident{{Name: "Test"}},
+				Tag: &ast.BasicLit{
+					Value: `form:"test"`,
+				}},
+		).FieldNames()
+		assert.NoError(t, err)
+		assert.Equal(t, "test", filednames[0])
+	})
+
+	t.Run("Two Names", func(t *testing.T) {
+		t.Parallel()
+
+		fieldnames, err := newTagBaseFieldParser(
+			&Parser{},
+			&ast.Field{
+				Names: []*ast.Ident{{Name: "X"}, {Name: "Y"}},
+			},
+		).FieldNames()
+		assert.NoError(t, err)
+		assert.Equal(t, 2, len(fieldnames))
+		assert.Equal(t, "x", fieldnames[0])
+		assert.Equal(t, "y", fieldnames[1])
 	})
 }
